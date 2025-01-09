@@ -1,0 +1,93 @@
+---
+- name: Config backup server
+  hosts: backup
+  become: true
+  gather_facts: False
+  tasks:
+  - name: Create user
+    ansible.builtin.user: 
+      user: borg
+      password : "{{ 'qwe123!@#' | password_hash('sha512') }}"
+      home: /home/borg
+      shell: /bin/bash
+  - name: Create .ssh directory
+    ansible.builtin.file:
+      path: /home/borg/.ssh
+      state: directory
+      mode: '0700'
+      owner: borg
+      group: borg
+  - name: Create authorized_keys
+    ansible.builtin.copy:
+      src: ./authorized_keys
+      dest: /home/borg/.ssh/authorized_keys
+      mode: '0600'
+      owner: borg
+      group: borg
+  - name: Create a new ext4 partition
+    community.general.parted:
+      device: /dev/sdb
+      number: 1
+      state: present
+      fs_type: ext4
+  - name: Format the volume with ext4 fs
+    community.general.filesystem:
+      fstype: ext4
+      dev: /dev/sdb1
+  - name: mount the partition on /var/backup
+    ansible.posix.mount:
+      path: /var/backup/
+      src: /dev/sdb1
+      fstype: ext4
+      state: mounted
+  - name: Target directory backup
+    ansible.builtin.file:
+      path: /var/backup
+      state: directory
+      mode: '0755'
+      owner: borg
+      group: borg
+      recurse: true
+
+- name: Install borgbackup
+  hosts: all
+  become: true
+  tasks:
+  - name: install borg
+    ansible.builtin.package:
+      name: borgbackup
+      state: present
+
+- name: Config client server
+  hosts: client
+  become: true
+  gather_facts: False
+  tasks:
+  - name: install sshpass
+    ansible.builtin.package:
+      name: sshpass
+      state: present
+  - name: copy key sshpass
+    ansible.builtin.package:
+      name: sshpass
+      state: present
+  - name: Create a 2048-bit SSH key for user root
+    ansible.builtin.user:
+      name: root
+      generate_ssh_key: yes
+      ssh_key_bits: 2048
+      ssh_key_file: .ssh/id_rsa
+  - name: copy key
+    command: sshpass -p "qwe123!@#" ssh-copy-id -i /root/.ssh/id_rsa.pub -o StrictHostKeyChecking=no borg@192.168.50.10
+  - name: copy borg-backup.service
+    copy: src=./files/borg-backup.service dest=/etc/systemd/system/borg-backup.service owner=root group=root mode=0644
+  - name: copy borg-backup.timer
+    copy: src=./files/borg-backup.timer dest=/etc/systemd/system/borg-backup.timer owner=root group=root mode=0644
+  - name: reload systemctl
+    command: systemctl daemon-reload
+  - name: enable borg-backup.timer
+    ansible.builtin.systemd_service:
+      daemon-reexec: true
+      enabled: true
+      state: started
+      name: borg-backup.timer
