@@ -91,3 +91,7 @@
       enabled: true
       state: started
       name: borg-backup.timer
+  - name: enable borg-backup.service
+    ansible.builtin.systemd_service:
+      state: started
+      name: borg-backup.service
